@@ -1,0 +1,2 @@
+quantuminspire==2.2.1
+qiskit==0.45.1
