@@ -1,18 +1,22 @@
 from __future__ import annotations
-from typing import Callable, Dict, Generator, Tuple, Sequence
+from typing import List, Callable, Mapping, Generator, Tuple, Sequence, MutableSequence
 import numpy as np
 from numpy.typing import NDArray
 from qiskit.circuit import QuantumCircuit
 
 Image = Tuple[NDArray[np.uint8], NDArray[np.uint8], NDArray[np.uint8]]
+PixelMapping = Callable[[int], Sequence[str]]
+
+GateInitializer = Callable[[QuantumCircuit], None]
 
 class CircuitBuilder:
 
     def __init__(self, w_qubits: int, h_qubits: int) -> None:
-        self.__w_qubits = w_qubits
-        self.__h_qubits = h_qubits
-        self.__data = [np.uint8(0)] * (2 ** self.qubits())
-        self.__circuit = QuantumCircuit(self.qubits())
+        self.__w_qubits: int = w_qubits
+        self.__h_qubits: int = h_qubits
+        self.__data: MutableSequence[complex] = [0] * (2 ** self.qubits())
+        self.__circuit: QuantumCircuit = QuantumCircuit(self.qubits())
+        self.__initializers: List[GateInitializer] = []
     
     def qubits(self) -> int:
         return self.__w_qubits + self.__h_qubits
@@ -22,46 +26,68 @@ class CircuitBuilder:
         self.__circuit = circuit
         return self
     
-    def gates(self, function: Callable[[QuantumCircuit], None]) -> CircuitBuilder:
-        function(self.__circuit)
+    def gates(self, function: GateInitializer) -> CircuitBuilder:
+        self.__initializers.append(function)
         return self
     
-    def with_data(self, data: Dict[str, np.complex128]) -> CircuitBuilder:
-        assert len(data) == 2 ** self.qubits()
+    def with_data(self, data: Mapping[str, complex]) -> CircuitBuilder:
         for key, value in data.items():
             self.__data[int(key, 2)] = value
         return self
     
     def build(self) -> QuantumCircuit:
         self.__circuit.initialize(self.__data, range(self.qubits()))
+        for function in self.__initializers:
+            function(self.__circuit)
         return self.__circuit
 
-def _map_channel_to_states(channel: NDArray[np.uint8], w_strings: Sequence[str], h_strings: Sequence[str]) -> Dict[str, np.complex128]:
-    grid: Dict[str, Tuple[int, int]] = {}
+def _map_channel_to_amplitudes(channel: NDArray[np.uint8], w_strings: Sequence[str], h_strings: Sequence[str]) -> Mapping[str, complex]:
+    data = {
+        w_strings[x] + h_strings[y]: np.sqrt(channel[x, y], dtype=np.float64)
+        for x in range(channel.shape[0])
+        for y in range(channel.shape[1])
+    }
 
-    for x in range(len(w_strings)):
-        for y in range(len(h_strings)):
-            grid[w_strings[x] + h_strings[y]] = (x, y)
-
-    data = {bit_string: np.sqrt(channel[pos]) for bit_string, pos in grid.items()}
-    norm = np.sqrt(np.sum(np.array(data.values()) ** 2))
+    # norm = np.sqrt(np.sum(data.values() ** 2))
+    norm = np.linalg.norm(list(data.values()))
 
     for key, value in data.items():
         data[key] = value / norm
     
     return data
 
+def _map_amplitudes_to_channel(state_vector: Sequence[complex], w_strings: Sequence[str], h_strings: Sequence[str]) -> NDArray[np.uint8]:
+    m, n = len(w_strings), len(h_strings)
+    rescale = 255 / np.max(np.power(np.abs(state_vector), 2))
+
+    data = np.zeros((m, n), dtype=np.uint8)
+
+    for i in range(m):
+        for j in range(n):
+            data[i, j] = rescale * (np.abs(state_vector[int(w_strings[i] + h_strings[j], 2)]) ** 2)
+
+    return data
+
 def hamming_manhattan_mapping(n_qubits: int) -> Sequence[str]:
     bit_strings = ["0", "1"]
-    for _ in range(n_qubits):
+
+    for _ in range(n_qubits - 1):
         pad_0 = [elem + "0" for elem in bit_strings]
         pad_1 = [elem + "1" for elem in bit_strings[::-1]]
         bit_strings = pad_0 + pad_1
+
     return bit_strings
 
-def circuits(image: Image, pixel_mapping: Callable[[int], Sequence[str]] = hamming_manhattan_mapping) -> Generator[CircuitBuilder, None, None]:
+def to_circuit(channel: NDArray[np.uint8], pixel_mapping: PixelMapping = hamming_manhattan_mapping) -> CircuitBuilder:
+    w_qubits, h_qubits = int(np.ceil(np.log2(channel.shape[0]))), int(np.ceil(np.log2(channel.shape[1])))
+    data = _map_channel_to_amplitudes(channel, pixel_mapping(w_qubits), pixel_mapping(h_qubits))       
+    return CircuitBuilder(w_qubits, h_qubits).with_data(data)
+                                          
+def to_circuits(image: Image, pixel_mapping: PixelMapping = hamming_manhattan_mapping) -> Generator[CircuitBuilder, None, None]:
     for channel in image:
-        width, height = channel.shape
-        w_qubits, h_qubits = np.ceil(np.log2(width), dtype=int), np.ceil(np.log2(height), dtype=int)
-        data = _map_channel_to_states(channel, pixel_mapping(w_qubits), pixel_mapping(h_qubits))        
-        yield CircuitBuilder(w_qubits, h_qubits).with_data(data)
+        yield to_circuit(channel, pixel_mapping)
+
+def to_channel(state_vector: Sequence[complex], width: int, height: int, pixel_mapping: PixelMapping = hamming_manhattan_mapping) -> NDArray[np.uint8]:
+    w_qubits, h_qubits = int(np.ceil(np.log2(width))), int(np.ceil(np.log2(height)))
+    assert len(state_vector) == 2 ** (w_qubits + h_qubits)
+    return _map_amplitudes_to_channel(state_vector, pixel_mapping(w_qubits), pixel_mapping(h_qubits))[:width, :height]
