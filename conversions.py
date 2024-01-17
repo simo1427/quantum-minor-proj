@@ -1,13 +1,11 @@
 from __future__ import annotations
-from typing import List, Callable, Mapping, Generator, Tuple, Sequence, MutableSequence
+from typing import Any, Callable, Mapping, Generator, Tuple, Sequence, MutableSequence
 import numpy as np
 from numpy.typing import NDArray
 from qiskit.circuit import QuantumCircuit
 
 Image = Tuple[NDArray[np.uint8], NDArray[np.uint8], NDArray[np.uint8]]
 PixelMapping = Callable[[int], Sequence[str]]
-
-GateInitializer = Callable[[QuantumCircuit], None]
 
 class CircuitBuilder:
 
@@ -16,18 +14,17 @@ class CircuitBuilder:
         self.__h_qubits: int = h_qubits
         self.__data: MutableSequence[complex] = [0] * (2 ** self.qubits())
         self.__circuit: QuantumCircuit = QuantumCircuit(self.qubits())
-        self.__initializers: List[GateInitializer] = []
     
     def qubits(self) -> int:
         return self.__w_qubits + self.__h_qubits
     
     def from_circuit(self, circuit: QuantumCircuit) -> CircuitBuilder:
         assert circuit.num_qubits == self.qubits()
-        self.__circuit = circuit
+        self.__circuit.data = [instr for instr in circuit.data if instr.operation.name != "initialize"]
         return self
     
-    def gates(self, function: GateInitializer) -> CircuitBuilder:
-        self.__initializers.append(function)
+    def gates(self, function: Callable[[QuantumCircuit], Any]) -> CircuitBuilder:
+        function(self.__circuit)
         return self
     
     def with_data(self, data: Mapping[str, complex]) -> CircuitBuilder:
@@ -37,8 +34,7 @@ class CircuitBuilder:
     
     def build(self) -> QuantumCircuit:
         self.__circuit.initialize(self.__data, range(self.qubits()))
-        for function in self.__initializers:
-            function(self.__circuit)
+        self.__circuit.data.insert(0, self.__circuit.data.pop())
         return self.__circuit
 
 def _map_channel_to_amplitudes(channel: NDArray[np.uint8], w_strings: Sequence[str], h_strings: Sequence[str]) -> Mapping[str, complex]:
@@ -48,7 +44,6 @@ def _map_channel_to_amplitudes(channel: NDArray[np.uint8], w_strings: Sequence[s
         for y in range(channel.shape[1])
     }
 
-    # norm = np.sqrt(np.sum(data.values() ** 2))
     norm = np.linalg.norm(list(data.values()))
 
     for key, value in data.items():
