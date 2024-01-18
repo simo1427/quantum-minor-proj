@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import Any, Callable, Dict, List, Mapping, Generator, Tuple, Sequence
-from itertools import filter
 import numpy as np
 from numpy.typing import NDArray
 from qiskit import execute, Aer
