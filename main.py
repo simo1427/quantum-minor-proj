@@ -1,8 +1,10 @@
+import cv2
 import numpy as np
 from apng import APNG
-from qiskit import QuantumCircuit
+from qiskit import QuantumCircuit, Aer
+from qiskit_ibm_runtime import QiskitRuntimeService
 
-from circuit_conversion import channel_to_circuit, run_circuit, sv_to_channel
+from circuit_conversion import channel_to_circuit, run_circuit, probabilities_to_channel, image_to_circuits
 from image_preprocessing import image_read
 from PIL import Image as PilImage
 
@@ -19,18 +21,25 @@ def rotate_by_angle(phi):
 
 
 def animate_image(filename: str):
-    circuit_builder = channel_to_circuit(image_read(filename, True))
+    cb1, cb2, cb3 = tuple([circ for circ in image_to_circuits(image_read(filename))])
 
     # Animate the transformation. Still a WIP
     files = []
-    for i in range(1, 101):
-        circuit = circuit_builder.gates(rotate_by_angle(2 * np.pi * i / 100)).build()
-
-        channels = sv_to_channel(run_circuit(circuit), 16, 16)
-
-        files.append(f'{i}.png')
-        PilImage.fromarray(channels).convert('L').save(f'media/{i}.png')
-    APNG.from_files(files, delay=50).save('media/result.png')
+    frames = 60
+    for i in range(frames):
+        print(i)
+        print('Building circuit')
+        circuit1 = cb1.copy().gates(rotate_by_angle(2 * np.pi * i / (frames - 1))).build()
+        circuit2 = cb2.copy().gates(rotate_by_angle(2 * np.pi * i / (frames - 1))).build()
+        circuit3 = cb3.copy().gates(rotate_by_angle(2 * np.pi * i / (frames - 1))).build()
+        print('Getting channels')
+        channels1 = probabilities_to_channel(run_circuit(circuit1))
+        channels2 = probabilities_to_channel(run_circuit(circuit2))
+        channels3 = probabilities_to_channel(run_circuit(circuit3))
+        print('Saving image')
+        files.append(f'media/{i}.png')
+        cv2.imwrite(f'media/{i}.png', np.stack([channels1, channels2, channels3], axis=2))
+    APNG.from_files(files, delay=1000//30).save('media/result.png')
 
 if __name__ == '__main__':
     animate_image('media/Flower.png')
