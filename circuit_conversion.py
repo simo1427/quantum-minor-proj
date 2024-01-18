@@ -9,20 +9,16 @@ from qiskit.result import Result
 Image = Tuple[NDArray[np.uint8], NDArray[np.uint8], NDArray[np.uint8]]
 PixelMapping = Callable[[int], Sequence[str]]
 
-
 class CircuitBuilder:
-    '''
-    Provides a nice interface for building quantum circuits tailored specifically for this project.
-    '''
-    def __init__(self, w_qubits: int, h_qubits: int) -> None:
-        self.__w_qubits: int = w_qubits
-        self.__h_qubits: int = h_qubits
+
+    def __init__(self, n_qubits: int) -> None:
+        self.__n_qubits: int = n_qubits
         self.__data: MutableSequence[complex] = [0] * (2 ** self.qubits())
         self.__circuit: QuantumCircuit = QuantumCircuit(self.qubits())
 
     def qubits(self) -> int:
-        return self.__w_qubits + self.__h_qubits
-
+        return self.__n_qubits
+    
     def from_circuit(self, circuit: QuantumCircuit) -> CircuitBuilder:
         assert circuit.num_qubits == self.qubits()
         self.__circuit.data = [instr for instr in circuit.data if instr.operation.name != "initialize"]
@@ -42,11 +38,9 @@ class CircuitBuilder:
         self.__circuit.data.insert(0, self.__circuit.data.pop())
         return self.__circuit
 
-
-def _map_channel_to_amplitudes(channel: NDArray[np.uint8], w_strings: Sequence[str], h_strings: Sequence[str]) -> \
-Mapping[str, complex]:
+def _map_channel_to_amplitudes(channel: NDArray[np.uint8], bit_strings: Sequence[str]) -> Mapping[str, complex]:
     data = {
-        w_strings[x] + h_strings[y]: np.sqrt(channel[x, y], dtype=np.float64)
+        bit_strings[x] + bit_strings[y]: np.sqrt(channel[x, y], dtype=np.float64)
         for x in range(channel.shape[0])
         for y in range(channel.shape[1])
     }
@@ -58,20 +52,17 @@ Mapping[str, complex]:
 
     return data
 
+def _map_amplitudes_to_channel(probabilities: Sequence[float], bit_strings: Sequence[str]) -> NDArray[np.uint8]:
+    n = len(bit_strings)
+    rescale = 255 / np.max(probabilities)
 
-def _map_amplitudes_to_channel(state_vector: Sequence[complex], w_strings: Sequence[str], h_strings: Sequence[str]) -> \
-NDArray[np.uint8]:
-    m, n = len(w_strings), len(h_strings)
-    rescale = 255 / np.max(np.power(np.abs(state_vector), 2))
+    data = np.zeros((n, n), dtype=np.uint8)
 
-    data = np.zeros((m, n), dtype=np.uint8)
-
-    for i in range(m):
+    for i in range(n):
         for j in range(n):
-            data[i, j] = rescale * (np.abs(state_vector[int(w_strings[i] + h_strings[j], 2)]) ** 2)
+            data[i, j] = rescale * (probabilities[int(bit_strings[i] + bit_strings[j], 2)])
 
     return data
-
 
 def hamming_manhattan_mapping(n_qubits: int) -> Sequence[str]:
     bit_strings = ["0", "1"]
@@ -83,40 +74,27 @@ def hamming_manhattan_mapping(n_qubits: int) -> Sequence[str]:
 
     return bit_strings
 
+def ordinal_mapping(n_qubits: int) -> Sequence[str]:
+    return [f"{i:0{n_qubits}b}" for i in range(2 ** n_qubits)]
 
-def channel_to_circuit(channel: NDArray[np.uint8], pixel_mapping: PixelMapping = hamming_manhattan_mapping) -> CircuitBuilder:
-    '''
-    Converts a single channel into a `CircuitBuilder`. It can then be used to construct more complex circuits.
-    '''
-    w_qubits, h_qubits = int(np.ceil(np.log2(channel.shape[0]))), int(np.ceil(np.log2(channel.shape[1])))
-    data = _map_channel_to_amplitudes(channel, pixel_mapping(w_qubits), pixel_mapping(h_qubits))
+def channel_to_circuit(channel: NDArray[np.uint8], pixel_mapping: PixelMapping = ordinal_mapping) -> CircuitBuilder:
+    n_qubits = int(np.ceil(np.log2(channel.shape[0])))
+    data = _map_channel_to_amplitudes(channel, pixel_mapping(n_qubits))       
+    return CircuitBuilder(2 * n_qubits).with_data(data)
 
-    return CircuitBuilder(w_qubits, h_qubits).with_data(data)
-
-
-def image_to_circuits(image: Image, pixel_mapping: PixelMapping = hamming_manhattan_mapping) -> Generator[CircuitBuilder, None, None]:
-    '''
-    Takes an entire `Image` type - a tuple of 3 channels - and converts them into 3 circuits.
-    '''
+def image_to_circuits(image: Image, pixel_mapping: PixelMapping = ordinal_mapping) -> Generator[CircuitBuilder, None, None]:
     for channel in image:
         yield channel_to_circuit(channel, pixel_mapping)
 
+def probabilities_to_channel(probabilities: Sequence[float], pixel_mapping: PixelMapping = ordinal_mapping) -> NDArray[np.uint8]:
+    n_qubits = int(np.ceil(np.log2(len(probabilities))))
+    return _map_amplitudes_to_channel(probabilities, pixel_mapping(n_qubits))
 
-def sv_to_channel(state_vector: Sequence[complex], width: int, height: int,
-                  pixel_mapping: PixelMapping = hamming_manhattan_mapping) -> NDArray[np.uint8]:
-    '''
-    Converts a state vector back into a channel.
-    '''
-    w_qubits, h_qubits = int(np.ceil(np.log2(width))), int(np.ceil(np.log2(height)))
-    assert len(state_vector) == 2 ** (w_qubits + h_qubits)
-    return _map_amplitudes_to_channel(state_vector, pixel_mapping(w_qubits), pixel_mapping(h_qubits))[:width, :height]
-
-
-def run_circuit(qc: QuantumCircuit) -> Sequence[complex]:
+def run_circuit(qc: QuantumCircuit) -> Sequence[float]:
     '''
     Runs the circuit using the `statevector_simulator` backend of Aer.
     Important: unlike in most other cases, there should be no measurements done at the end of the QC
     :return: the statevector of the circuit
     '''
     result: Result = execute(qc, Aer.get_backend('statevector_simulator')).result()
-    return result.get_statevector()
+    return result.get_counts()
