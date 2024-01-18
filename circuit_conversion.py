@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Mapping, Generator, Tuple, Sequence
 import numpy as np
 from numpy.typing import NDArray
-from qiskit import execute, Aer
+from qiskit import QuantumRegister, execute, Aer
 from qiskit.circuit import QuantumCircuit
 from qiskit.result import Result
 
@@ -12,34 +12,38 @@ PixelMapping = Callable[[int], Sequence[str]]
 
 class CircuitBuilder:
 
-    def __init__(self, n_qubits: int) -> None:
-        self.__n_qubits: int = n_qubits
-        self.__data: NDArray[np.complex128] = np.zeros((2 ** n_qubits,), dtype=np.complex128)
+    def __init__(self, *qubits: int) -> None:
+        assert len(qubits) != 0
+        self.__qubits: int = np.sum(qubits)
+        self.__registers: Sequence[QuantumRegister] = [QuantumRegister(register) for register in qubits]
+        self.__data: NDArray[np.complex128] = np.zeros((len(self.__registers), 2 ** self.qubits), dtype=np.complex128)
         self.__instructions = []
 
     @property
     def qubits(self) -> int:
-        return self.__n_qubits
+        return self.__qubits
 
     def from_circuit(self, circuit: QuantumCircuit) -> CircuitBuilder:
         assert circuit.num_qubits == self.qubits
         self.__instructions = [instr for instr in circuit.data if instr.operation.name != "initialize"]
         return self
 
-    def gates(self, function: Callable[[QuantumCircuit], Any]) -> CircuitBuilder:
-        circuit = QuantumCircuit(self.qubits)
-        function(circuit)
-        self.__instructions.extend([instr for instr in circuit.data if instr.operation.name != "initialize"])
+    def gates(self, function: Callable[[QuantumCircuit, Sequence[QuantumRegister]], Any]) -> CircuitBuilder:
+        circuit = QuantumCircuit(*self.__registers)
+        function(circuit, self.__registers)
+        self.__instructions = [instr for instr in circuit.data if instr.operation.name != "initialize"]
         return self
 
-    def with_data(self, data: Mapping[str, complex]) -> CircuitBuilder:
-        for key, value in data.items():
-            self.__data[int(key, 2)] = value
+    def with_data(self, data: Sequence[Mapping[str, complex]]) -> CircuitBuilder:
+        for i in range(len(data)):
+            for key, value in data[i].items():
+                self.__data[i, int(key, 2)] = value
         return self
 
     def build(self) -> QuantumCircuit:
-        circuit = QuantumCircuit(self.qubits)
-        circuit.initialize(self.__data, range(self.qubits))   #type: ignore
+        circuit = QuantumCircuit(*self.__registers)
+        for i, register in enumerate(self.__registers):
+            circuit.initialize(self.__data[i], [register])
         circuit.data.extend(self.__instructions)
         return circuit
 
@@ -90,7 +94,7 @@ def ordinal_mapping(n_qubits: int) -> Sequence[str]:
 def channel_to_circuit(channel: NDArray[np.uint8], pixel_mapping: PixelMapping = ordinal_mapping) -> CircuitBuilder:
     n_qubits = int(np.ceil(np.log2(channel.shape[0])))
     data = _map_channel_to_amplitudes(channel, pixel_mapping(n_qubits))
-    return CircuitBuilder(2 * n_qubits).with_data(data)
+    return CircuitBuilder(2 * n_qubits).with_data([data])
 
 
 def image_to_circuits(image: Image, pixel_mapping: PixelMapping = ordinal_mapping) -> Generator[CircuitBuilder, None, None]:
@@ -111,7 +115,7 @@ def run_circuit(qc: QuantumCircuit, shots=None) -> Sequence[float]:
     :return: the statevector of the circuit
     '''
     qc.measure_all()
-    result: Result = execute(qc, Aer.get_backend('qasm_simulator')).result()
+    result: Result = execute(qc, Aer.get_backend('qasm_simulator'), shots=4 ** qc.num_qubits).result()
     counts: Dict[str, int] = result.get_counts()
     probabilities = np.zeros((2 ** qc.num_qubits,), dtype=np.float64)
     for key, value in counts.items():
