@@ -29,9 +29,9 @@ def animate_image(filename: str):
     for i in range(frames):
         print(i)
         print('Building circuit')
-        circuit1 = cb1.copy().gates(rotate_by_angle(2 * np.pi * i / (frames - 1))).build()
-        circuit2 = cb2.copy().gates(rotate_by_angle(2 * np.pi * i / (frames - 1))).build()
-        circuit3 = cb3.copy().gates(rotate_by_angle(2 * np.pi * i / (frames - 1))).build()
+        circuit1 = cb1.gates(rotate_by_angle(2 * np.pi * i / (frames - 1))).build()
+        circuit2 = cb2.gates(rotate_by_angle(2 * np.pi * i / (frames - 1))).build()
+        circuit3 = cb3.gates(rotate_by_angle(2 * np.pi * i / (frames - 1))).build()
         print('Getting channels')
         channels1 = probabilities_to_channel(run_circuit(circuit1))
         channels2 = probabilities_to_channel(run_circuit(circuit2))
