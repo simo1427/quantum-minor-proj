@@ -7,18 +7,7 @@ from qiskit_ibm_runtime import QiskitRuntimeService
 from circuit_conversion import channel_to_circuit, run_circuit, probabilities_to_channel, image_to_circuits
 from image_preprocessing import image_read
 from PIL import Image as PilImage
-
-
-def rotate_by_angle(phi):
-    '''
-    Having this wrapper that returns the actual gate sequence allows us to change the phi angle dynamically.
-    Change the inner method as needed.
-    :param phi: the angle in radians
-    '''
-    def inner_method(qc: QuantumCircuit):
-        qc.rx(phi, qc.qubits)
-    return inner_method
-
+from image_effects import *
 
 def animate_image(filename: str):
     cb1, cb2, cb3 = tuple([circ for circ in image_to_circuits(image_read(filename))])
