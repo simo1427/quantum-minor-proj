@@ -39,7 +39,7 @@ class CircuitBuilder:
 
     def build(self) -> QuantumCircuit:
         circuit = QuantumCircuit(self.qubits)
-        circuit.initialize(self.__data, range(self.qubits()))   #type: ignore
+        circuit.initialize(self.__data, range(self.qubits))   #type: ignore
         circuit.data.extend(self.__instructions)
         return circuit
 
