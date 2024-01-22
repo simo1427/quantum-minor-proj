@@ -64,8 +64,7 @@ def animate_image(
 
     files = []
     for i in range(frames):
-        print(i)
-        circuits = [cb.gates(rotate_by_angle()).build() for cb in circuit_builders]
+        circuits = [cb.gates(rotate_by_angle(2 * np.pi * i / fps)).build() for cb in circuit_builders]
         channels = [probabilities_to_channel(run_circuit(qc)) for qc in circuits]
 
         files.append(f'media/{i}.png')
