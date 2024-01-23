@@ -1,3 +1,4 @@
+from ast import Call
 from typing import Any
 
 import cv2
@@ -6,6 +7,7 @@ from apng import APNG
 from qiskit import QuantumCircuit
 from qiskit.extensions import UnitaryGate
 from typing import Callable
+from animation_curves import linear
 
 from circuit_conversion import Effect, channel_to_circuit, image_to_circuits, probabilities_to_channel, run_circuit
 from image_preprocessing import image_read
@@ -75,8 +77,10 @@ def partial_swap(circuit: QuantumCircuit, alpha: float, **kwargs) -> None:
 def animate_image(
         filename: str,
         output_filename: str,
-        frames: int, fps=5,
-        grayscale=False
+        frames: int, 
+        fps: int = 24,
+        animation_curve: Callable[[float], float] = linear,
+        grayscale: bool = False
 ):
     if grayscale:
         circuit_builders = [channel_to_circuit(image_read(filename, grayscale=True))]
@@ -85,7 +89,8 @@ def animate_image(
 
     files = []
     for i in range(frames):
-        circuits = [cb.apply_effect(rx_gates, phi=2 * np.pi * i / (frames - 1)).build() for cb in circuit_builders]
+        t = animation_curve(i / (frames - 1))
+        circuits = [cb.apply_effect(rx_gates, phi=2 * np.pi * t).build() for cb in circuit_builders]
         channels = np.array([list(probabilities_to_channel(run_circuit(qc))) for qc in circuits]).squeeze(axis=1)
         files.append(f'media/{i}.png')
         cv2.imwrite(f'media/{i}.png', np.stack(channels, axis=2))

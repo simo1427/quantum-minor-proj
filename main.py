@@ -2,6 +2,7 @@ from typing import List
 
 from matplotlib import pyplot as plt
 from qiskit import execute, Aer
+from animation_curves import easeInOutElastic
 
 from circuit_conversion import images_to_circuits, timer
 from image_effects import *
@@ -18,8 +19,9 @@ def test2():
 
     files = []
     for frame in range(10):
+        t = easeInOutElastic(frame / 9)
 
-        circuits = [b.apply_effect(partial_swap, alpha=frame / 9).build() for b in builders]
+        circuits = [b.apply_effect(partial_swap, alpha=t).build() for b in builders]
 
         probabilities = [run_circuit(qc) for qc in circuits]
         channels = np.array([list(probabilities_to_channel(prob)) for prob in probabilities])
