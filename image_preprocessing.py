@@ -17,7 +17,7 @@ def image_read(path: str, grayscale: bool = False) -> Mat:
     """
     if grayscale:
         return cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-    return np.rollaxis(cv2.imread(path), axis=2)
+    return np.moveaxis(cv2.imread(path), 2, 0)
 
 def bgr_to_ycrcb(img: np.ndarray, subsampling: bool = True) -> (Mat, Mat, Mat):
     """

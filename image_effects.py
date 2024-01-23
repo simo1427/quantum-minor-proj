@@ -1,60 +1,81 @@
-from typing import Sequence, Any
+from typing import Any
 
 import cv2
 import numpy as np
 from apng import APNG
 from qiskit import QuantumCircuit
+from qiskit.extensions import UnitaryGate
 from typing import Callable
-from qiskit import QuantumCircuit, QuantumRegister
 
-from circuit_conversion import channel_to_circuit, image_to_circuits, probabilities_to_channel, run_circuit
+from circuit_conversion import Effect, channel_to_circuit, image_to_circuits, probabilities_to_channel, run_circuit
 from image_preprocessing import image_read
 
 
-def rx_gates(phi, qc: QuantumCircuit): # intermediate between the image and the same flipped
-    qc.rx(phi, range(qc.num_qubits))
+# IMPORTANT: all effect functions must have a signature of the Effect class
+
+
+# intermediate between the image and the same flipped
+def rx_gates(circuit: QuantumCircuit, phi: float, **kwargs) -> None:
+    circuit.rx(phi, range(circuit.num_qubits))
 
     # IMPORTANT: NO IMAGE WAS OUTPUT WHEN USING PI/16!! TODO: LOOK INTO WHY
 
-def ry_gates(phi: float, qc: QuantumCircuit): # intermediate between the image and the same flipped
-    qc.ry(phi, range(qc.num_qubits))
+
+# intermediate between the image and the same flipped
+def ry_gates(circuit: QuantumCircuit, phi: float, **kwargs) -> None:
+    circuit.ry(phi, range(circuit.num_qubits))
 
     # IMPORTANT: A BLACK IMAGE WAS OUTPUT WHEN USING PI/8!! TODO: LOOK INTO WHY
 
-def single_rx_gate(phi: float, i: int, qc: QuantumCircuit): # intermediate between the image and the same flipped
-    qc.rx(phi, i)
+
+# intermediate between the image and the same flipped
+def single_rx_gate(circuit: QuantumCircuit, i: int, phi: float, **kwargs) -> None:
+    circuit.rx(phi, i)
 
     # IMPORTANT: OUTPUT DIDN'T SEEM TO CHANGE FOR PI/16! TODO: LOOK INTO WHY
     # possible explanation: the effect is barely visible
 
-def rz_gates(phi: float, qc: QuantumCircuit):
-    qc.rz(phi, range(qc.num_qubits))
 
-def single_hadamard(i: int, qc: QuantumCircuit): # vertical bars of size 2^{qubit with hadamard gate}
-    qc.h(i)
+def rz_gates(circuit: QuantumCircuit, phi: float, **kwargs) -> None:
+    circuit.rz(phi, range(circuit.num_qubits))
 
-def some_mix_1(qc: QuantumCircuit):
-    qc.h(0)
-    qc.rx(-np.pi/3, 4)
 
-def swap_gate(i: int, j: int, qc: QuantumCircuit):
-    qc.swap(i, j)
+# vertical bars of size 2^{qubit with hadamard gate}
+def single_hadamard(circuit: QuantumCircuit, i: int, **kwargs) -> None:
+    circuit.h(i)
 
-def rotate_by_angle(phi):
-    '''
-    Having this wrapper that returns the actual gate sequence allows us to change the phi angle dynamically.
-    Change the inner method as needed.
-    :param phi: the angle in radians
-    '''
-    def inner_method(qc: QuantumCircuit, registers: Sequence[QuantumRegister]):
-        qc.rx(phi, qc.qubits)
-    return inner_method
+
+def some_mix_1(circuit: QuantumCircuit, **kwargs) -> None:
+    circuit.h(0)
+    circuit.rx(-np.pi/3, 4)
+
+
+def swap_gate(circuit: QuantumCircuit, i: int, j: int, **kwargs) -> None:
+    circuit.swap(i, j)
+
+
+# partially swaps amplitudes two registers (images) based on https://en.wikipedia.org/wiki/List_of_quantum_logic_gates#Non-Clifford_swap_gates
+def partial_swap(circuit: QuantumCircuit, alpha: float, **kwargs) -> None:
+    gate = UnitaryGate(
+        np.array([[1,                                    0,                                    0, 0],
+                  [0, (1 + np.exp(1j * np.pi * alpha)) / 2, (1 - np.exp(1j * np.pi * alpha)) / 2, 0],
+                  [0, (1 - np.exp(1j * np.pi * alpha)) / 2, (1 + np.exp(1j * np.pi * alpha)) / 2, 0],
+                  [0,                                    0,                                    0, 1]]),
+        label="SWAP^alpha gate"
+    )
+    circuit.append(gate, [circuit.qregs[0], circuit.qregs[1]])
+
+
+# def partial_swap(circuit: QuantumCircuit, percentage: float, **kwargs) -> None:
+#     circuit.rxx(np.pi / 2 * percentage, circuit.qregs[0], circuit.qregs[1])
+#     circuit.ryy(np.pi / 2 * percentage, circuit.qregs[0], circuit.qregs[1])
+#     circuit.rzz(np.pi / 2 * percentage, circuit.qregs[0], circuit.qregs[1])
 
 
 def animate_image(
         filename: str,
         output_filename: str,
-        frames: int, fps=1000//24,
+        frames: int, fps=5,
         grayscale=False
 ):
     if grayscale:
@@ -64,26 +85,26 @@ def animate_image(
 
     files = []
     for i in range(frames):
-        circuits = [cb.gates(rotate_by_angle(2 * np.pi * i / fps)).build() for cb in circuit_builders]
-        channels = [probabilities_to_channel(run_circuit(qc)) for qc in circuits]
-
+        circuits = [cb.apply_effect(rx_gates, phi=2 * np.pi * i / (frames - 1)).build() for cb in circuit_builders]
+        channels = np.array([list(probabilities_to_channel(run_circuit(qc))) for qc in circuits]).squeeze(axis=1)
         files.append(f'media/{i}.png')
         cv2.imwrite(f'media/{i}.png', np.stack(channels, axis=2))
-    APNG.from_files(files, delay=fps).save(output_filename)
+    APNG.from_files(files, delay=1000//fps).save(output_filename)
 
 
-def apply_gate_to_image(
+def apply_effect_to_image(
         filename: str,
         output_filename: str,
-        gate: Callable[[QuantumCircuit], Any],
-        grayscale=False
+        effect: Effect,
+        grayscale=False,
+        **kwargs
 ):
     if grayscale:
         circuit_builders = [channel_to_circuit(image_read(filename, grayscale=True))]
     else:
         circuit_builders = [circ for circ in image_to_circuits(image_read(filename))]
 
-    circuits = [cb.gates(gate).build() for cb in circuit_builders]
-    channels = [probabilities_to_channel(run_circuit(qc)) for qc in circuits]
+    circuits = [cb.apply_effect(effect, **kwargs).build() for cb in circuit_builders]
+    channels = np.array([list(probabilities_to_channel(run_circuit(qc))) for qc in circuits]).squeeze(axis=1)
 
     cv2.imwrite(output_filename, np.stack(channels, axis=2))

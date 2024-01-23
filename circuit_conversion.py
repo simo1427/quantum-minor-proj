@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Dict, List, Mapping, Generator, Tuple, Sequence
+from typing import Callable, Dict, Mapping, Generator, Protocol, Tuple, Sequence, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,19 +12,25 @@ from qiskit.primitives import SamplerResult
 from qiskit.result import Result
 from qiskit_ibm_runtime import QiskitRuntimeService, Sampler, RuntimeJob
 
+service = QiskitRuntimeService(channel="ibm_quantum")
+
 Image = Tuple[NDArray[np.uint8], NDArray[np.uint8], NDArray[np.uint8]]
 PixelMapping = Callable[[int], Sequence[str]]
 
-service = QiskitRuntimeService(channel="ibm_quantum")
+
+class Effect(Protocol):
+    def __call__(self, circuit: QuantumCircuit, **kwargs) -> None:
+        pass
 
 
 class CircuitBuilder:
 
     def __init__(self, *qubits: int) -> None:
         assert len(qubits) != 0
+
         self.__qubits: int = np.sum(qubits)
         self.__registers: Sequence[QuantumRegister] = [QuantumRegister(register) for register in qubits]
-        self.__data: NDArray[np.complex128] = np.zeros((len(self.__registers), 2 ** self.__registers[0].size),
+        self.__data: NDArray[np.complex128] = np.zeros((len(self.__registers), 2 ** np.max(qubits)),
                                                        dtype=np.complex128)
         self.__instructions = []
 
@@ -34,27 +40,41 @@ class CircuitBuilder:
 
     def from_circuit(self, circuit: QuantumCircuit) -> CircuitBuilder:
         assert circuit.num_qubits == self.qubits
-        self.__instructions = [instr for instr in circuit.data if instr.operation.name != "initialize"]
-        return self
 
-    def gates(self, function: Callable[[QuantumCircuit, Sequence[QuantumRegister]], Any]) -> CircuitBuilder:
+        self.__instructions = [instr for instr in circuit.data if instr.operation.name != "initialize"]
+
+        return self
+    
+    def apply_effect(self, effect: Effect, **kwargs) -> CircuitBuilder:
         circuit = QuantumCircuit(*self.__registers)
-        function(circuit, self.__registers)
+
+        effect(circuit, **kwargs)
         self.__instructions = [instr for instr in circuit.data if instr.operation.name != "initialize"]
+
         return self
 
-    def with_data(self, data: Sequence[Mapping[str, complex]]) -> CircuitBuilder:
+    def with_data(self, *data: Mapping[str, complex]) -> CircuitBuilder:
+        assert len(data) == len(self.__registers)
+        assert all(len(elem) <= 2 ** self.__registers[i].size for i, elem in enumerate(data))
+
         for i in range(len(data)):
             for key, value in data[i].items():
                 self.__data[i, int(key, 2)] = value
+        
         return self
 
     def build(self) -> QuantumCircuit:
         circuit = QuantumCircuit(*self.__registers)
+
         for i, register in enumerate(self.__registers):
             circuit.initialize(self.__data[i], [register])
+
         circuit.data.extend(self.__instructions)
+
         return circuit
+
+
+_compute_qubits_from_size = lambda size: int(np.ceil(np.log2(size)))
 
 
 def _map_channel_to_amplitudes(channel: NDArray[np.uint8], bit_strings: Sequence[str]) -> Mapping[str, complex]:
@@ -68,18 +88,20 @@ def _map_channel_to_amplitudes(channel: NDArray[np.uint8], bit_strings: Sequence
 
     for key, value in data.items():
         data[key] = value / norm
+    
     return data
 
 
-def _map_amplitudes_to_channel(probabilities: Sequence[float], bit_strings: Sequence[str]) -> NDArray[np.uint8]:
+def _map_probabilities_to_channel(probabilities: Sequence[float], bit_strings: Sequence[str]) -> NDArray[np.uint8]:
     n = len(bit_strings)
-    rescale = 255 / np.max(probabilities)
+    norm = np.max(probabilities)
+    max_color = 255
 
     data = np.zeros((n, n), dtype=np.uint8)
 
     for i in range(n):
         for j in range(n):
-            data[i, j] = rescale * (probabilities[int(bit_strings[i] + bit_strings[j], 2)])
+            data[i, j] = max_color * probabilities[int(bit_strings[i] + bit_strings[j], 2)] / norm
 
     return data
 
@@ -100,9 +122,9 @@ def ordinal_mapping(n_qubits: int) -> Sequence[str]:
 
 
 def channel_to_circuit(channel: NDArray[np.uint8], pixel_mapping: PixelMapping = ordinal_mapping) -> CircuitBuilder:
-    n_qubits = int(np.ceil(np.log2(channel.shape[0])))
+    n_qubits = _compute_qubits_from_size(channel.shape[0])
     data = _map_channel_to_amplitudes(channel, pixel_mapping(n_qubits))
-    return CircuitBuilder(2 * n_qubits).with_data([data])
+    return CircuitBuilder(2 * n_qubits).with_data(data)
 
 
 def image_to_circuits(image: Image, pixel_mapping: PixelMapping = ordinal_mapping) -> Generator[
@@ -115,21 +137,21 @@ def images_to_circuits(im1: Image, im2: Image, pixel_mapping: PixelMapping = ord
     for ch1, ch2 in zip(im1, im2):
         assert ch1.shape == ch2.shape
 
-        ch1_qubits = int(np.ceil(np.log2(ch1.shape[0])))
-        ch2_qubits = int(np.ceil(np.log2(ch2.shape[0])))
+        ch1_qubits = _compute_qubits_from_size(ch1.shape[0])
+        ch2_qubits = _compute_qubits_from_size(ch2.shape[0])
 
         data1 = _map_channel_to_amplitudes(ch1, pixel_mapping(ch1_qubits))
         data2 = _map_channel_to_amplitudes(ch2, pixel_mapping(ch2_qubits))
 
-        yield CircuitBuilder(2 * ch1_qubits, 2 * ch2_qubits).with_data([data1, data2])
+        yield CircuitBuilder(2 * ch1_qubits, 2 * ch2_qubits).with_data(data1, data2)
 
 
 def probabilities_to_channel(probabilities: NDArray[np.float64], pixel_mapping: PixelMapping = ordinal_mapping) -> \
-Generator[NDArray[
-    np.uint8], None, None]:
+Generator[NDArray[np.uint8], None, None]:
     for register in probabilities:
-        n_qubits = int(np.ceil(np.log2(len(register)))) // 2
-        yield _map_amplitudes_to_channel(register, pixel_mapping(n_qubits))
+        n_qubits = _compute_qubits_from_size(len(register)) // 2
+        probs = _map_probabilities_to_channel(register, pixel_mapping(n_qubits))
+        yield probs
 
 
 def timer(func):
@@ -144,8 +166,29 @@ def timer(func):
     return wrapper_timer
 
 
+def _extract_probabilities(dists_or_counts: Union[Mapping[str, int], Mapping[int, float]], circuit: QuantumCircuit) -> NDArray[np.float64]:
+    reg_count, reg_size = len(circuit.qregs), np.max(list(map(lambda reg: reg.size, circuit.qregs)))
+    probabilities = np.zeros((reg_count, 2 ** reg_size), dtype=np.float64)
+
+    norm = np.sum(list(dists_or_counts.values()))
+
+    data: Dict[int, float] = {
+        (int(key, 2) if isinstance(key, str) else key): value / norm
+        for key, value in dists_or_counts.items()
+    }
+
+    for key, value in data.items():
+
+        for i in range(reg_count):
+            index = key >> (i * reg_size)
+            index &= (1 << reg_size) - 1
+            probabilities[i, index] += value
+
+    return probabilities
+
+
 @timer
-def run_circuit(qc: QuantumCircuit, shots=None) -> Sequence[float]:
+def run_circuit(qc: QuantumCircuit, shots=None) -> NDArray[np.float64]:
     '''
     Runs the circuit using the `statevector_simulator` backend of Aer.
     Important: unlike in most other cases, there should be no measurements done at the end of the QC
@@ -154,42 +197,15 @@ def run_circuit(qc: QuantumCircuit, shots=None) -> Sequence[float]:
     qc.measure_all()
     result: Result = execute(qc, Aer.get_backend('qasm_simulator'), shots=10_000).result()
     counts: Dict[str, int] = result.get_counts()
-    probabilities = np.zeros((len(qc.qregs), 2 ** qc.qregs[0].size), dtype=np.float64)
-
-    qreg_count, qreg_size = len(qc.qregs), qc.qregs[0].size
-    for key, value in counts.items():
-        for i in range(qreg_count):
-            index = int(key[i * qreg_size:(i + 1) * qreg_size], 2)
-            try:
-                probabilities[i, index] += value
-            except:
-                probabilities[i, index] = value
-
-    for i, row_sum in enumerate(np.sum(probabilities, axis=1)):
-        probabilities[i] /= row_sum
-
-    return probabilities
+    return _extract_probabilities(counts, qc)
 
 
 @timer
 def run_circuit_ibm(qc: QuantumCircuit, shots=None) -> RuntimeJob:
     qc.measure_all()
-    return Sampler(service.backend("ibmq_qasm_simulator")).run(qc, shots=100_000)
+    return Sampler(service.backend("ibmq_qasm_simulator")).run(qc, shots=10_000)
 
 
 @timer
-def get_simulation_results(qc: QuantumCircuit, job: RuntimeJob) -> Sequence[float]:
-    quasi_probabilities: Dict[int, float] = job.result().experiments[0]["quasi_dists"]
-    probabilities = np.zeros((len(qc.qregs), 2 ** qc.qregs[0].size), dtype=np.float64)
-
-    qreg_count, qreg_size = len(qc.qregs), qc.qregs[0].size
-    for key, value in quasi_probabilities.items():
-        for i in range(qreg_count):
-            bit_string = f"{key:0{qreg_count * qreg_size}b}"
-            index = int(bit_string[i * qreg_size:(i + 1) * qreg_size], 2)
-            try:
-                probabilities[i, index] += value
-            except:
-                probabilities[i, index] = value
-
-    return probabilities
+def get_simulation_results(qc: QuantumCircuit, job: RuntimeJob) -> NDArray[np.float64]:
+    return _extract_probabilities(job.result().experiments[0].quasi_dists, qc)
