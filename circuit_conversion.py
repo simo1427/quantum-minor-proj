@@ -195,17 +195,6 @@ def run_circuit(qc: QuantumCircuit, shots=None) -> NDArray[np.float64]:
     :return: the statevector of the circuit
     '''
     qc.measure_all()
-    result: Result = execute(qc, Aer.get_backend('qasm_simulator'), shots=10_000).result()
+    result: Result = execute(qc, Aer.get_backend('qasm_simulator'), shots=shots).result()
     counts: Dict[str, int] = result.get_counts()
     return _extract_probabilities(counts, qc)
-
-
-@timer
-def run_circuit_ibm(qc: QuantumCircuit, shots=None) -> RuntimeJob:
-    qc.measure_all()
-    return Sampler(service.backend("ibmq_qasm_simulator")).run(qc, shots=10_000)
-
-
-@timer
-def get_simulation_results(qc: QuantumCircuit, job: RuntimeJob) -> NDArray[np.float64]:
-    return _extract_probabilities(job.result().experiments[0].quasi_dists, qc)

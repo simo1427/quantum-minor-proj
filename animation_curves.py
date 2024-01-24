@@ -15,7 +15,7 @@ def easeInOutSine(t: float) -> float:
 def easeInCubic(t: float) -> float:
     return t ** 3
 
-def easeOutCubit(t: float) -> float:
+def easeOutCubic(t: float) -> float:
     return 1 - (1 - t) ** 3
 
 def easeInOutCubic(t: float) -> float:

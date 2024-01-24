@@ -1,5 +1,5 @@
 from ast import Call
-from typing import Any
+from typing import Any, Optional
 
 import cv2
 import numpy as np
@@ -80,7 +80,8 @@ def animate_image(
         frames: int, 
         fps: int = 24,
         animation_curve: Callable[[float], float] = linear,
-        grayscale: bool = False
+        grayscale: bool = False,
+        shots: Optional[int] = None
 ):
     if grayscale:
         circuit_builders = [channel_to_circuit(image_read(filename, grayscale=True))]
@@ -90,10 +91,10 @@ def animate_image(
     files = []
     for i in range(frames):
         t = animation_curve(i / (frames - 1))
-        circuits = [cb.apply_effect(rx_gates, phi=2 * np.pi * t).build() for cb in circuit_builders]
-        channels = np.array([list(probabilities_to_channel(run_circuit(qc))) for qc in circuits]).squeeze(axis=1)
+        circuits = [cb.apply_effect(rx_gates, phi=np.pi * t).build() for cb in circuit_builders]
+        channels = np.array([list(probabilities_to_channel(run_circuit(qc, shots))) for qc in circuits]).squeeze(axis=1)
         files.append(f'media/{i}.png')
-        cv2.imwrite(f'media/{i}.png', np.stack(channels, axis=2))
+        cv2.imwrite(f'media/{i}.png', cv2.resize(np.stack(channels, axis=2), (256, 256), interpolation=cv2.INTER_NEAREST))
     APNG.from_files(files, delay=1000//fps).save(output_filename)
 
 
@@ -112,4 +113,4 @@ def apply_effect_to_image(
     circuits = [cb.apply_effect(effect, **kwargs).build() for cb in circuit_builders]
     channels = np.array([list(probabilities_to_channel(run_circuit(qc))) for qc in circuits]).squeeze(axis=1)
 
-    cv2.imwrite(output_filename, np.stack(channels, axis=2))
+    cv2.imwrite(output_filename, cv2.resize(np.stack(channels, axis=2), (256, 256), interpolation=cv2.INTER_NEAREST))

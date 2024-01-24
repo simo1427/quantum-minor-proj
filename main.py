@@ -1,41 +1,10 @@
-from typing import List
+from animation_curves import easeInOutElastic, easeOutCubic
 
-from matplotlib import pyplot as plt
-from qiskit import execute, Aer
-from animation_curves import easeInOutElastic
-
-from circuit_conversion import images_to_circuits, timer
 from image_effects import *
 
 
-@timer
-def test1():
-    animate_image("media/Flower.png", "media/result.png", 24)
-
-
-@timer
-def test2():
-    builders = [circ for circ in images_to_circuits(image_read('media/ocean.png'), image_read('media/grass.png'))]
-
-    files = []
-    for frame in range(10):
-        t = easeInOutElastic(frame / 9)
-
-        circuits = [b.apply_effect(partial_swap, alpha=t).build() for b in builders]
-
-        probabilities = [run_circuit(qc) for qc in circuits]
-        channels = np.array([list(probabilities_to_channel(prob)) for prob in probabilities])
-
-        for i in range(channels.shape[1]):
-            tmp = channels[:, i, :, :]
-            img = np.moveaxis(tmp, 0, 2)
-            cv2.imwrite(f'media/{frame}-{i}.png', cv2.resize(img, (256, 256), interpolation=cv2.INTER_NEAREST))
-        files.append(f'media/{frame}-1.png')
-    APNG.from_files(files + files[::-1], delay=1000//10).save('media/testtest.png')
-
-
 if __name__ == "__main__":
-    test2()
+    animate_image('media/ocean.png', 'media/result.png', frames=90, fps=30, animation_curve=easeOutCubic, shots=10_000)
     # regs = [QuantumRegister(2), QuantumRegister(2)]
     # qc = QuantumCircuit(*regs)
     # qc.measure_all()
