@@ -235,7 +235,7 @@ def run_circuit_statevector(qc: QuantumCircuit, device: str = 'CPU') -> NDArray[
 
     backend = Aer.get_backend('statevector_simulator')
     backend.set_options(device=device)
-    result: Result = execute(qc, backend).result()
+    result: Result = execute(qc, backend, shots=1).result()
     # print(type(result.get_statevector()))
     statevector: NDArray = result.get_statevector()
     # print(statevector)

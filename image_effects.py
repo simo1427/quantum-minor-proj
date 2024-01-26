@@ -12,7 +12,7 @@ from qiskit_ibm_runtime import QiskitRuntimeService, Batch, Sampler, Options
 from animation_curves import linear
 from circuit_conversion import Effect, channel_to_circuit_builder, image_to_circuits, probabilities_to_channel, \
     run_circuit, _extract_probabilities, run_circuit_statevector
-from image_preprocessing import image_read
+from image_preprocessing import image_read, image_pad
 
 
 # IMPORTANT: all effect functions must have a signature of the Effect class
@@ -154,12 +154,14 @@ def apply_effect_to_image_statevector(
         effect: Effect,
         grayscale=False,
         device='CPU',
+        padding='reflect',
         **kwargs
 ):
     if grayscale:
-        circuit_builders = [channel_to_circuit_builder(image_read(filename, grayscale=True))]
+        circuit_builders = [channel_to_circuit_builder(image_pad(image_read(filename, grayscale=True), padding=padding))]
     else:
-        circuit_builders = [circ for circ in image_to_circuits(image_read(filename))]
+        img = image_pad(image_read(filename), padding=padding)
+        circuit_builders = [circ for circ in image_to_circuits(img)]
 
 
     circuits = [cb.apply_effect(effect, **kwargs).build(measure_all=False) for cb in circuit_builders]  # Build the circuits

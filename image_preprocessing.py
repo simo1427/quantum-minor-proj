@@ -19,6 +19,34 @@ def image_read(path: str, grayscale: bool = False) -> Mat:
         return cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     return np.moveaxis(cv2.imread(path), 2, 0)
 
+def image_pad(image, padding='reflect'):
+    """
+    Pads the image provided as input
+
+    Arguments:
+    image -- the image data stored as an NDArray
+    
+    Keyword arguments:
+    padding='reflect' -- the mode of padding; consult Numpy's documentation for np.pad() for the available modes
+    """
+
+    # Keep in mind that this is expected to work with image_read, which 
+    # *rolls the axes so that the first dim is colour...*
+
+    if len(image.shape) == 2:
+        pow2 = 2**int(np.max(np.ceil(np.log2(np.array(image.shape)))))
+
+    pow2 = 2**int(np.max(np.ceil(np.log2(np.array(image.shape[:2])))))
+
+    pad_image = lambda x: np.pad(x, ((pow2-x.shape[0])//2, (pow2-x.shape[1])//2), mode=padding)
+
+    if len(image.shape) == 2:
+        return pad_image(image)
+    
+    out = np.stack([pad_image(image[i]) for i in range(image.shape[0])], axis=0)
+    print(out.shape)
+    return out
+
 def bgr_to_ycrcb(img: np.ndarray, subsampling: bool = True) -> (Mat, Mat, Mat):
     """
     Returns a tuple containing three separate Numpy arrays holding the image data.
