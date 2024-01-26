@@ -61,14 +61,16 @@ class CircuitBuilder:
 
         return self
 
-    def build(self) -> QuantumCircuit:
+    def build(self, measure_all=True) -> QuantumCircuit:
         circuit = QuantumCircuit(*self.__registers)
 
         for i, register in enumerate(self.__registers):
             circuit.initialize(self.__data[i], [register])
 
         circuit.data.extend(self.__instructions)
-        circuit.measure_all()
+
+        if measure_all:
+            circuit.measure_all()
 
         return circuit
 
@@ -222,3 +224,20 @@ def run_circuit(qc: QuantumCircuit, shots=None) -> NDArray[np.float64]:
     result: Result = execute(qc, Aer.get_backend('qasm_simulator'), shots=shots).result()
     counts: Dict[str, int] = result.get_counts()
     return _extract_probabilities(counts, qc)
+
+
+@timer
+def run_circuit_statevector(qc: QuantumCircuit, device: str = 'CPU') -> NDArray[np.float64]:
+    '''
+    Runs the circuit using the `statevector_simulator` backend of Aer.
+    :return: the statevector of the circuit
+    '''
+
+    backend = Aer.get_backend('statevector_simulator')
+    backend.set_options(device=device)
+    result: Result = execute(qc, backend).result()
+    # print(type(result.get_statevector()))
+    statevector: NDArray = result.get_statevector()
+    # print(statevector)
+    probabilities: Dict[str, float] = {key: np.abs(value) ** 2 for key, value in statevector.to_dict().items()}
+    return _extract_probabilities(probabilities, qc)

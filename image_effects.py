@@ -11,7 +11,7 @@ from qiskit_ibm_runtime import QiskitRuntimeService, Batch, Sampler, Options
 
 from animation_curves import linear
 from circuit_conversion import Effect, channel_to_circuit_builder, image_to_circuits, probabilities_to_channel, \
-    run_circuit, _extract_probabilities
+    run_circuit, _extract_probabilities, run_circuit_statevector
 from image_preprocessing import image_read
 
 
@@ -146,3 +146,28 @@ def apply_effect_to_image(
         ]).squeeze(axis=1)
 
         cv2.imwrite(output_filename, cv2.resize(np.stack(channels, axis=2), (1024, 1024), interpolation=cv2.INTER_NEAREST))
+
+
+def apply_effect_to_image_statevector(
+        filename: str,
+        output_filename: str,
+        effect: Effect,
+        grayscale=False,
+        device='CPU',
+        **kwargs
+):
+    if grayscale:
+        circuit_builders = [channel_to_circuit_builder(image_read(filename, grayscale=True))]
+    else:
+        circuit_builders = [circ for circ in image_to_circuits(image_read(filename))]
+
+
+    circuits = [cb.apply_effect(effect, **kwargs).build(measure_all=False) for cb in circuit_builders]  # Build the circuits
+
+    channels = np.array([list(probabilities_to_channel(run_circuit_statevector(qc, device=device))) for qc in circuits]).squeeze(axis=1)
+
+    print(channels.shape)
+
+    cv2.imwrite(output_filename, np.stack(channels, axis=2))
+        
+    # cv2.imwrite(output_filename, cv2.resize(np.stack(channels, axis=2), (1024, 1024), interpolation=cv2.INTER_NEAREST))
