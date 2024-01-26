@@ -3,16 +3,11 @@ from __future__ import annotations
 import time
 from typing import Callable, Dict, Mapping, Generator, Protocol, Tuple, Sequence, Union
 
-import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
 from qiskit import QuantumRegister, execute, Aer
 from qiskit.circuit import QuantumCircuit
-from qiskit.primitives import SamplerResult
 from qiskit.result import Result
-from qiskit_ibm_runtime import QiskitRuntimeService, Sampler, RuntimeJob
-
-service = QiskitRuntimeService(channel="ibm_quantum")
 
 Image = Tuple[NDArray[np.uint8], NDArray[np.uint8], NDArray[np.uint8]]
 PixelMapping = Callable[[int], Sequence[str]]
@@ -24,6 +19,9 @@ class Effect(Protocol):
 
 
 class CircuitBuilder:
+    '''
+    Helper class for building circuits
+    '''
 
     def __init__(self, *qubits: int) -> None:
         assert len(qubits) != 0
@@ -44,7 +42,7 @@ class CircuitBuilder:
         self.__instructions = [instr for instr in circuit.data if instr.operation.name != "initialize"]
 
         return self
-    
+
     def apply_effect(self, effect: Effect, **kwargs) -> CircuitBuilder:
         circuit = QuantumCircuit(*self.__registers)
 
@@ -60,7 +58,7 @@ class CircuitBuilder:
         for i in range(len(data)):
             for key, value in data[i].items():
                 self.__data[i, int(key, 2)] = value
-        
+
         return self
 
     def build(self) -> QuantumCircuit:
@@ -70,25 +68,39 @@ class CircuitBuilder:
             circuit.initialize(self.__data[i], [register])
 
         circuit.data.extend(self.__instructions)
+        circuit.measure_all()
 
         return circuit
 
 
-_compute_qubits_from_size = lambda size: int(np.ceil(np.log2(size)))
+def _compute_qubits_from_size(size) -> int:
+    '''
+    Returns the amount of qubits needed to encode a channel.
+    :param size: The length of the channel
+    :return: the number of qubits needed
+    '''
+    return int(np.ceil(np.log2(size)))
 
 
 def _map_channel_to_amplitudes(channel: NDArray[np.uint8], bit_strings: Sequence[str]) -> Mapping[str, complex]:
+    '''
+    Returns a mapping from the given list of bit-strings to the amplitudes in the channel
+    :param channel: the 2x2 color channel being mapped
+    :param bit_strings: a list
+    :return: the mapping from bit-strings to amplitudes
+    '''
+    assert channel.ndim == 2, f'This method operates on one channel at a time, but the channel is:\n{channel}'
+
     data = {
         bit_strings[x] + bit_strings[y]: np.sqrt(channel[x, y], dtype=np.float64)
-        for x in range(channel.shape[0])
-        for y in range(channel.shape[1])
+        for x, y in np.ndindex(channel.shape)
     }
 
     norm = np.linalg.norm(list(data.values()))
 
     for key, value in data.items():
         data[key] = value / norm
-    
+
     return data
 
 
@@ -118,10 +130,22 @@ def hamming_manhattan_mapping(n_qubits: int) -> Sequence[str]:
 
 
 def ordinal_mapping(n_qubits: int) -> Sequence[str]:
+    '''
+    Creates a sequence of bit-strings in lexicographic order, used for mapping qubit states to pixels, and vice-versa.
+    :param n_qubits: The number of qubits to create the mapping for
+    :return: The sequence of bit-strings
+    '''
     return [f"{i:0{n_qubits}b}" for i in range(2 ** n_qubits)]
 
 
-def channel_to_circuit(channel: NDArray[np.uint8], pixel_mapping: PixelMapping = ordinal_mapping) -> CircuitBuilder:
+def channel_to_circuit_builder(channel: NDArray[np.uint8], pixel_mapping: PixelMapping = ordinal_mapping) -> CircuitBuilder:
+    '''
+
+    :param channel:
+    :param pixel_mapping:
+    :return:
+    '''
+    assert channel.ndim == 2, 'This method operates on one channel at a time, but the channel is:\n{channel}'
     n_qubits = _compute_qubits_from_size(channel.shape[0])
     data = _map_channel_to_amplitudes(channel, pixel_mapping(n_qubits))
     return CircuitBuilder(2 * n_qubits).with_data(data)
@@ -130,7 +154,7 @@ def channel_to_circuit(channel: NDArray[np.uint8], pixel_mapping: PixelMapping =
 def image_to_circuits(image: Image, pixel_mapping: PixelMapping = ordinal_mapping) -> Generator[
     CircuitBuilder, None, None]:
     for channel in image:
-        yield channel_to_circuit(channel, pixel_mapping)
+        yield channel_to_circuit_builder(channel, pixel_mapping)
 
 
 def images_to_circuits(im1: Image, im2: Image, pixel_mapping: PixelMapping = ordinal_mapping):
@@ -148,6 +172,8 @@ def images_to_circuits(im1: Image, im2: Image, pixel_mapping: PixelMapping = ord
 
 def probabilities_to_channel(probabilities: NDArray[np.float64], pixel_mapping: PixelMapping = ordinal_mapping) -> \
 Generator[NDArray[np.uint8], None, None]:
+    assert probabilities.ndim == 2, f'{probabilities}'
+
     for register in probabilities:
         n_qubits = _compute_qubits_from_size(len(register)) // 2
         probs = _map_probabilities_to_channel(register, pixel_mapping(n_qubits))
@@ -190,11 +216,9 @@ def _extract_probabilities(dists_or_counts: Union[Mapping[str, int], Mapping[int
 @timer
 def run_circuit(qc: QuantumCircuit, shots=None) -> NDArray[np.float64]:
     '''
-    Runs the circuit using the `statevector_simulator` backend of Aer.
-    Important: unlike in most other cases, there should be no measurements done at the end of the QC
+    Runs the circuit using the `qasm_simulator` backend of Aer.
     :return: the statevector of the circuit
     '''
-    qc.measure_all()
     result: Result = execute(qc, Aer.get_backend('qasm_simulator'), shots=shots).result()
     counts: Dict[str, int] = result.get_counts()
     return _extract_probabilities(counts, qc)

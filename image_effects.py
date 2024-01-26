@@ -1,15 +1,17 @@
-from ast import Call
-from typing import Any, Optional
+from typing import Callable
+from typing import Optional
 
 import cv2
 import numpy as np
 from apng import APNG
 from qiskit import QuantumCircuit
 from qiskit.extensions import UnitaryGate
-from typing import Callable
-from animation_curves import linear
+from qiskit_aer.noise import NoiseModel
+from qiskit_ibm_runtime import QiskitRuntimeService, Batch, Sampler, Options
 
-from circuit_conversion import Effect, channel_to_circuit, image_to_circuits, probabilities_to_channel, run_circuit
+from animation_curves import linear
+from circuit_conversion import Effect, channel_to_circuit_builder, image_to_circuits, probabilities_to_channel, \
+    run_circuit, _extract_probabilities
 from image_preprocessing import image_read
 
 
@@ -84,7 +86,7 @@ def animate_image(
         shots: Optional[int] = None
 ):
     if grayscale:
-        circuit_builders = [channel_to_circuit(image_read(filename, grayscale=True))]
+        circuit_builders = [channel_to_circuit_builder(image_read(filename, grayscale=True))]
     else:
         circuit_builders = [circ for circ in image_to_circuits(image_read(filename))]
 
@@ -102,15 +104,45 @@ def apply_effect_to_image(
         filename: str,
         output_filename: str,
         effect: Effect,
+        shots: int,
         grayscale=False,
+        noisy=True,
         **kwargs
 ):
+    '''
+    This method can use run noisy simulations, which give slightly more accurate results, at the cost of longer
+    running times. For some reason it's still quite far from running it on actual hardware, but it's better than
+    nothing.
+
+    Since this only operates on a single frame, it's easier to do batch processing.
+    '''
     if grayscale:
-        circuit_builders = [channel_to_circuit(image_read(filename, grayscale=True))]
+        circuit_builders = [channel_to_circuit_builder(image_read(filename, grayscale=True))]
     else:
         circuit_builders = [circ for circ in image_to_circuits(image_read(filename))]
 
-    circuits = [cb.apply_effect(effect, **kwargs).build() for cb in circuit_builders]
-    channels = np.array([list(probabilities_to_channel(run_circuit(qc))) for qc in circuits]).squeeze(axis=1)
+    service = QiskitRuntimeService(channel='ibm_quantum')
+    backend = 'ibmq_qasm_simulator'
+    noise_model = NoiseModel.from_backend(service.backend("ibm_brisbane"))
 
-    cv2.imwrite(output_filename, cv2.resize(np.stack(channels, axis=2), (256, 256), interpolation=cv2.INTER_NEAREST))
+    options = Options()
+    if noisy:
+        options.simulator = {'noise_model': noise_model}  # Use the noise model of the Hanoi computer
+    options.execution.shots = shots
+    options.optimization_level = 0
+    options.resilience_level = 0
+
+    circuits = [cb.apply_effect(effect, **kwargs).build() for cb in circuit_builders]  # Build the circuits
+
+    with Batch(service=service, backend=backend):  # Speeds up computation
+        sampler = Sampler(options=options)
+
+        jobs = sampler.run(circuits)  # Schedule the job
+        probabilities = [exp['quasi_dists'] for exp in jobs.result().experiments]  # Run the job and extract the results
+
+        channels = np.array([
+            list(probabilities_to_channel(_extract_probabilities(prob, qc)))
+            for prob, qc in zip(probabilities, circuits)
+        ]).squeeze(axis=1)
+
+        cv2.imwrite(output_filename, cv2.resize(np.stack(channels, axis=2), (1024, 1024), interpolation=cv2.INTER_NEAREST))
