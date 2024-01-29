@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Callable, Dict, Mapping, Generator, Protocol, Tuple, Sequence, Union
+from typing import Callable, Dict, Mapping, Generator, Optional, Protocol, Tuple, Sequence, Union, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -9,7 +9,9 @@ from qiskit import QuantumRegister, execute, Aer
 from qiskit.circuit import QuantumCircuit
 from qiskit.result import Result
 
-Image = Tuple[NDArray[np.uint8], NDArray[np.uint8], NDArray[np.uint8]]
+from image_preprocessing import Image
+
+
 PixelMapping = Callable[[int], Sequence[str]]
 
 
@@ -20,7 +22,7 @@ class Effect(Protocol):
 
 class CircuitBuilder:
     '''
-    Helper class for building circuits
+    Helper class for building circuits with multiple registers from state vectors.
     '''
 
     def __init__(self, *qubits: int) -> None:
@@ -75,41 +77,46 @@ class CircuitBuilder:
         return circuit
 
 
-def _compute_qubits_from_size(size) -> int:
+def _qubits_from_size(size) -> int:
     '''
     Returns the amount of qubits needed to encode a channel.
     :param size: The length of the channel
-    :return: the number of qubits needed
+    :return: The number of qubits needed
     '''
     return int(np.ceil(np.log2(size)))
 
 
 def _map_channel_to_amplitudes(channel: NDArray[np.uint8], bit_strings: Sequence[str]) -> Mapping[str, complex]:
     '''
-    Returns a mapping from the given list of bit-strings to the amplitudes in the channel
+    Returns a mapping from the given list of bit-strings to the amplitudes in the channel.
     :param channel: the 2x2 color channel being mapped
-    :param bit_strings: a list
+    :param bit_strings: a list of bit-strings corresponding 
     :return: the mapping from bit-strings to amplitudes
     '''
     assert channel.ndim == 2, f'This method operates on one channel at a time, but the channel is:\n{channel}'
 
     data = {
-        bit_strings[x] + bit_strings[y]: np.sqrt(channel[x, y], dtype=np.float64)
+        bit_strings[x] + bit_strings[y]: np.sqrt(channel[x, y], dtype=np.float64)   # compute bit-string for each pixel along x and y-axis
         for x, y in np.ndindex(channel.shape)
     }
 
     norm = np.linalg.norm(list(data.values()))
 
     for key, value in data.items():
-        data[key] = value / norm
+        data[key] = value / norm    # normalize each value
 
     return data
 
 
-def _map_probabilities_to_channel(probabilities: Sequence[float], bit_strings: Sequence[str]) -> NDArray[np.uint8]:
+def _map_probabilities_to_channel(probabilities: Sequence[float], max_color: int, bit_strings: Sequence[str]) -> NDArray[np.uint8]:
+    '''
+    Returns a channel by mapping from the given list of bit-strings to the probabilities for each pixel
+    :param probabilities: the 2x2 color channel being mapped
+    :param bit_strings: a list
+    :return: the mapping from bit-strings to amplitudes
+    '''
     n = len(bit_strings)
     norm = np.max(probabilities)
-    max_color = 255
 
     data = np.zeros((n, n), dtype=np.uint8)
 
@@ -120,7 +127,7 @@ def _map_probabilities_to_channel(probabilities: Sequence[float], bit_strings: S
     return data
 
 
-def hamming_manhattan_mapping(n_qubits: int) -> Sequence[str]:
+def manhattan_mapping(n_qubits: int) -> Sequence[str]:
     bit_strings = ["0", "1"]
 
     for _ in range(n_qubits - 1):
@@ -131,7 +138,7 @@ def hamming_manhattan_mapping(n_qubits: int) -> Sequence[str]:
     return bit_strings
 
 
-def ordinal_mapping(n_qubits: int) -> Sequence[str]:
+def sequential_mapping(n_qubits: int) -> Sequence[str]:
     '''
     Creates a sequence of bit-strings in lexicographic order, used for mapping qubit states to pixels, and vice-versa.
     :param n_qubits: The number of qubits to create the mapping for
@@ -140,7 +147,7 @@ def ordinal_mapping(n_qubits: int) -> Sequence[str]:
     return [f"{i:0{n_qubits}b}" for i in range(2 ** n_qubits)]
 
 
-def channel_to_circuit_builder(channel: NDArray[np.uint8], pixel_mapping: PixelMapping = ordinal_mapping) -> CircuitBuilder:
+def channel_to_circuit_builder(channel: NDArray[np.uint8], pixel_mapping: PixelMapping = sequential_mapping) -> CircuitBuilder:
     '''
 
     :param channel:
@@ -148,23 +155,23 @@ def channel_to_circuit_builder(channel: NDArray[np.uint8], pixel_mapping: PixelM
     :return:
     '''
     assert channel.ndim == 2, 'This method operates on one channel at a time, but the channel is:\n{channel}'
-    n_qubits = _compute_qubits_from_size(channel.shape[0])
+    n_qubits = _qubits_from_size(channel.shape[0])
     data = _map_channel_to_amplitudes(channel, pixel_mapping(n_qubits))
     return CircuitBuilder(2 * n_qubits).with_data(data)
 
 
-def image_to_circuits(image: Image, pixel_mapping: PixelMapping = ordinal_mapping) -> Generator[
+def image_to_circuits(image: Image, pixel_mapping: PixelMapping = sequential_mapping) -> Generator[
     CircuitBuilder, None, None]:
     for channel in image:
         yield channel_to_circuit_builder(channel, pixel_mapping)
 
 
-def images_to_circuits(im1: Image, im2: Image, pixel_mapping: PixelMapping = ordinal_mapping):
+def images_to_circuits(im1: Image, im2: Image, pixel_mapping: PixelMapping = sequential_mapping):
     for ch1, ch2 in zip(im1, im2):
         assert ch1.shape == ch2.shape
 
-        ch1_qubits = _compute_qubits_from_size(ch1.shape[0])
-        ch2_qubits = _compute_qubits_from_size(ch2.shape[0])
+        ch1_qubits = _qubits_from_size(ch1.shape[0])
+        ch2_qubits = _qubits_from_size(ch2.shape[0])
 
         data1 = _map_channel_to_amplitudes(ch1, pixel_mapping(ch1_qubits))
         data2 = _map_channel_to_amplitudes(ch2, pixel_mapping(ch2_qubits))
@@ -172,14 +179,14 @@ def images_to_circuits(im1: Image, im2: Image, pixel_mapping: PixelMapping = ord
         yield CircuitBuilder(2 * ch1_qubits, 2 * ch2_qubits).with_data(data1, data2)
 
 
-def probabilities_to_channel(probabilities: NDArray[np.float64], pixel_mapping: PixelMapping = ordinal_mapping) -> \
+def probabilities_to_channel(probabilities: NDArray[np.float64], max_color: int, pixel_mapping: PixelMapping = sequential_mapping) -> \
 Generator[NDArray[np.uint8], None, None]:
     assert probabilities.ndim == 2, f'{probabilities}'
 
     for register in probabilities:
-        n_qubits = _compute_qubits_from_size(len(register)) // 2
-        probs = _map_probabilities_to_channel(register, pixel_mapping(n_qubits))
-        yield probs
+        n_qubits = _qubits_from_size(len(register)) // 2
+        channel = _map_probabilities_to_channel(register, max_color, pixel_mapping(n_qubits))
+        yield channel
 
 
 def timer(func):
@@ -200,44 +207,35 @@ def _extract_probabilities(dists_or_counts: Union[Mapping[str, int], Mapping[int
 
     norm = np.sum(list(dists_or_counts.values()))
 
-    data: Dict[int, float] = {
-        (int(key, 2) if isinstance(key, str) else key): value / norm
-        for key, value in dists_or_counts.items()
-    }
+    for key, value in dists_or_counts.items():
 
-    for key, value in data.items():
+        if isinstance(key, str):
+            key = int(key, 2)
 
         for i in range(reg_count):
             index = key >> (i * reg_size)
             index &= (1 << reg_size) - 1
-            probabilities[i, index] += value
+            probabilities[i, index] += value / norm
 
     return probabilities
 
 
 @timer
-def run_circuit(qc: QuantumCircuit, shots=None) -> NDArray[np.float64]:
+def run_circuit(circuit: QuantumCircuit, device: str = "CPU", shots: Optional[int] = None, use_statevector: bool = False) -> NDArray[np.float64]:
     '''
-    Runs the circuit using the `qasm_simulator` backend of Aer.
-    :return: the statevector of the circuit
+    Runs the circuit using the Aer backend.
+    :param circuit: The quantum circuit to execute
+    :param device: The device where the simulation is supposed to be executed on, defaults to CPU
+    :param shots: The number of shots the simulation should sample the result, defaults to None
+    :param use_statevector: Whether or not the probabilities should be computed from a statevector, disregards shot counting when enabled
+    :return: The probabilities of the circuit's state
     '''
-    result: Result = execute(qc, Aer.get_backend('qasm_simulator'), shots=shots).result()
-    counts: Dict[str, int] = result.get_counts()
-    return _extract_probabilities(counts, qc)
-
-
-@timer
-def run_circuit_statevector(qc: QuantumCircuit, device: str = 'CPU') -> NDArray[np.float64]:
-    '''
-    Runs the circuit using the `statevector_simulator` backend of Aer.
-    :return: the statevector of the circuit
-    '''
-
-    backend = Aer.get_backend('statevector_simulator')
+    backend = Aer.get_backend("statevector_simulator" if use_statevector else "qasm_simulator")
     backend.set_options(device=device)
-    result: Result = execute(qc, backend, shots=1).result()
-    # print(type(result.get_statevector()))
-    statevector: NDArray = result.get_statevector()
-    # print(statevector)
-    probabilities: Dict[str, float] = {key: np.abs(value) ** 2 for key, value in statevector.to_dict().items()}
-    return _extract_probabilities(probabilities, qc)
+    result: Result = execute(circuit, backend, shots=shots if not use_statevector else 1).result()
+    data: Union[Dict[str, int], Dict[int, float]]= {
+        int(key, 2): np.abs(value) ** 2 
+        for key, value in result.get_statevector().to_dict().items()
+    } if use_statevector else cast(Dict[str, int], result.get_counts())
+
+    return _extract_probabilities(data, circuit)
