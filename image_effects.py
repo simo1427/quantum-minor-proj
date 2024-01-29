@@ -137,19 +137,22 @@ def apply_effect_to_image(
     :param shots: The number of shots for sampling the simulation or None when the simulation should decide, defaults to None
     :param use_statevector: Whether or not the simulation should use statevectors, defaults to False
     """
-    image = image_read(filename, grayscale=grayscale)   # Load the image
+    image = image_pad(image_read(filename, grayscale=grayscale), padding=padding)   # Load, pad and convert the image to circuits
     max_colors = np.max(image, axis=(1, 2))
-    circuit_builders = image_to_circuits(image_pad(image, padding=padding)) # Pad and convert the image to circuits
+
+    circuit_builders = image_to_circuits(image, max_colors)
 
     circuits = [
-        builder.apply_effect(effect, **kwargs).build(measure_all=not use_statevector)
-        for builder in circuit_builders
+        (index, builder.apply_effect(effect, **kwargs).build(measure_all=not use_statevector))
+        for index, builder in circuit_builders
     ]  # Build the circuits
 
-    channels = np.array([
-        list(probabilities_to_channel(run_circuit(circuit, device=device, shots=shots, use_statevector=use_statevector), max_color)) 
-        for circuit, max_color in zip(circuits, max_colors)
-    ]).squeeze(axis=1)  # Squeeze along the register axis
+    channels = [[channel] for channel in image]
+
+    for (index, circuit), max_color in zip(circuits, max_colors):
+        channels[index] = list(probabilities_to_channel(run_circuit(circuit, device=device, shots=shots, use_statevector=use_statevector), max_color))
+
+    channels = np.array(channels).squeeze(axis=1)  # Squeeze along the register axis
 
     cv2.imwrite(output_filename, np.stack(channels, axis=2))
 
@@ -171,8 +174,7 @@ def apply_effect_to_image_ibm(
     Since this only operates on a single frame, it's easier to do batch processing.
     """
     image = image_read(filename, grayscale=grayscale)   # Load the image
-    max_colors = np.max(image, axis=0)
-    print(max_colors)
+    max_colors = np.max(image, axis=(1, 2))
     circuit_builders = image_to_circuits(image)
 
     service = QiskitRuntimeService(channel="ibm_quantum")
@@ -222,7 +224,9 @@ def animate_image(
     """
     Creates an animated image 
     """
-    circuit_builders = image_to_circuits(image_pad(image_read(filename, grayscale=grayscale), padding=padding))
+    image = image_read(filename, grayscale=grayscale)   # Load the image
+    max_colors = np.max(image, axis=(1, 2))
+    circuit_builders = image_to_circuits(image_pad(image, padding=padding))
     files = []
 
     for i in range(frames):
@@ -237,11 +241,12 @@ def animate_image(
         ]
 
         channels = np.array([
-            list(probabilities_to_channel(run_circuit(circuit, device=device, shots=shots, use_statevector=use_statevector)))
-            for circuit in circuits
+            list(probabilities_to_channel(run_circuit(circuit, device=device, shots=shots, use_statevector=use_statevector), max_color))
+            for circuit, max_color in zip(circuits, max_colors)
         ]).squeeze(axis=1)
 
         files.append(f'media/{i}.png')
-        cv2.imwrite(f'media/{i}.png', cv2.resize(np.stack(channels, axis=2), (256, 256), interpolation=cv2.INTER_NEAREST))
+        # cv2.resize(, (256, 256), interpolation=cv2.INTER_NEAREST)
+        cv2.imwrite(f'media/{i}.png', np.stack(channels, axis=2))
 
     APNG.from_files(files, delay=1000//fps).save(output_filename)

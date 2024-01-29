@@ -160,10 +160,12 @@ def channel_to_circuit_builder(channel: NDArray[np.uint8], pixel_mapping: PixelM
     return CircuitBuilder(2 * n_qubits).with_data(data)
 
 
-def image_to_circuits(image: Image, pixel_mapping: PixelMapping = sequential_mapping) -> Generator[
-    CircuitBuilder, None, None]:
-    for channel in image:
-        yield channel_to_circuit_builder(channel, pixel_mapping)
+def image_to_circuits(image: Image, max_colors: NDArray[np.uint8], pixel_mapping: PixelMapping = sequential_mapping) -> Generator[
+    Tuple[int, CircuitBuilder], None, None]:
+
+    for index, channel in enumerate(image):
+        if max_colors[index] > 0:
+         yield (index, channel_to_circuit_builder(channel, pixel_mapping))
 
 
 def images_to_circuits(im1: Image, im2: Image, pixel_mapping: PixelMapping = sequential_mapping):
