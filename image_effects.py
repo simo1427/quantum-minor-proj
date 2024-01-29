@@ -149,8 +149,8 @@ def apply_effect_to_image(
 
     channels = [[channel] for channel in image]
 
-    for (index, circuit), max_color in zip(circuits, max_colors):
-        channels[index] = list(probabilities_to_channel(run_circuit(circuit, device=device, shots=shots, use_statevector=use_statevector), max_color))
+    for index, circuit in circuits:
+        channels[index] = list(probabilities_to_channel(run_circuit(circuit, device=device, shots=shots, use_statevector=use_statevector), max_colors[index]))
 
     channels = np.array(channels).squeeze(axis=1)  # Squeeze along the register axis
 
