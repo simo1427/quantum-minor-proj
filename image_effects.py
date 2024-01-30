@@ -1,4 +1,4 @@
-from typing import Optional, Union, Callable
+from typing import Optional, Sequence, Union, Callable
 
 import cv2
 import numpy as np
@@ -9,7 +9,7 @@ from qiskit_aer.noise import NoiseModel
 from qiskit_ibm_runtime import QiskitRuntimeService, Batch, Sampler, Options
 
 from timing_curves import linear
-from circuit_conversion import Effect, image_to_circuits, probabilities_to_channel, \
+from circuit_conversion import Effect, image_to_circuits, images_to_circuits, probabilities_to_channel, \
     run_circuit, _extract_probabilities
 from image_preprocessing import image_read, image_pad
 
@@ -219,34 +219,86 @@ def animate_image(
         device: str = "CPU",
         shots: Optional[int] = None,
         use_statevector: bool = False,
-        **kwargs: Union[int, float, complex]
+        animate_back: bool = False,
+        **kwargs
 ) -> None: 
     """
     Creates an animated image 
     """
     image = image_read(filename, grayscale=grayscale)   # Load the image
     max_colors = np.max(image, axis=(1, 2))
-    circuit_builders = image_to_circuits(image_pad(image, padding=padding))
+    circuit_builders = image_to_circuits(image_pad(image, padding=padding), max_colors)
+
     files = []
 
-    for i in range(frames):
-        t = timing_curve(i / (frames - 1))
+    for frame in range(frames):
+        t = timing_curve(frame / (frames - 1))
 
         circuits = [
-            builder.apply_effect(effect, **{
+            (index, builder.apply_effect(effect, **{
                 key: (value * t if isinstance(value, float) else value)
                 for key, value in kwargs.items()
-            }).build()  # Scale real parameters by the current time
-            for builder in circuit_builders
-        ]
+            }).build(measure_all=not use_statevector))  # Scale real parameters by the current time)
+            for index, builder in circuit_builders
+        ]  # Build the circuits
 
-        channels = np.array([
-            list(probabilities_to_channel(run_circuit(circuit, device=device, shots=shots, use_statevector=use_statevector), max_color))
-            for circuit, max_color in zip(circuits, max_colors)
-        ]).squeeze(axis=1)
+        channels = [[channel] for channel in image]
 
-        files.append(f'media/{i}.png')
-        # cv2.resize(, (256, 256), interpolation=cv2.INTER_NEAREST)
+        for index, circuit in circuits:
+            channels[index] = list(probabilities_to_channel(run_circuit(circuit, device=device, shots=shots, use_statevector=use_statevector), max_colors[index]))
+
+        channels = np.array(channels).squeeze(axis=1)  # Squeeze along the register axis
+
+        files.append(f'media/{frame}.png')
         cv2.imwrite(f'media/{i}.png', np.stack(channels, axis=2))
 
-    APNG.from_files(files, delay=1000//fps).save(output_filename)
+    APNG.from_files(files + (files[::-1] if animate_back else []), delay=1000//fps).save(output_filename)
+
+
+def animate_images(
+        start_filename: str,
+        end_filename: str,
+        effect: Effect,
+        frames: int,
+        fps: int = 24,
+        timing_curve: Callable[[float], float] = linear,
+        grayscale: bool = False,
+        device: str = "CPU",
+        shots: Optional[int] = None,
+        use_statevector: bool = False,
+        animate_back: bool = False,
+        **kwargs
+) -> None:
+    images = [image_read(start_filename, grayscale=grayscale), image_read(end_filename, grayscale=grayscale)]
+    max_colors = np.moveaxis(np.max(images, axis=(2, 3)), 1, 0)
+    circuit_builders = list(images_to_circuits(images, max_colors))
+
+    files = [[] for _ in images]
+
+    for frame in range(frames):
+        t = timing_curve(frame / (frames - 1))
+
+        circuits = [
+            (index, builder.apply_effect(effect, **{
+                key: (value * t if isinstance(value, float) else value)
+                for key, value in kwargs.items()
+            }).build(measure_all=not use_statevector))  # Scale real parameters by the current time
+            for index, builder in circuit_builders
+        ]
+
+        channels = np.stack([channels for channels in zip(*images)], axis=0)
+
+        for index, circuit in circuits:
+            lerped_color = max_colors[index][0] + t * (max_colors[index][1] - max_colors[index][0])
+            channels[index] = list(probabilities_to_channel(run_circuit(circuit, device=device, shots=shots, use_statevector=use_statevector), lerped_color))
+
+        for i in range(channels.shape[1]):
+            tmp = channels[:, i, :, :]
+            img = np.moveaxis(tmp, 0, 2)
+
+            filename = f"media/{frame}-{i}.png"
+            cv2.imwrite(filename, img)
+            files[i].append(filename)
+    
+    APNG.from_files(files[0] + (files[1] if animate_back else []), delay=1000//fps).save(f"{start_filename[:-4]}-transition.png")
+    APNG.from_files(files[1] + (files[0] if animate_back else []), delay=1000//fps).save(f"{end_filename[:-4]}-transition.png")

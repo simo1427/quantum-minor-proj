@@ -168,17 +168,17 @@ def image_to_circuits(image: Image, max_colors: NDArray[np.uint8], pixel_mapping
          yield (index, channel_to_circuit_builder(channel, pixel_mapping))
 
 
-def images_to_circuits(im1: Image, im2: Image, pixel_mapping: PixelMapping = sequential_mapping):
-    for ch1, ch2 in zip(im1, im2):
-        assert ch1.shape == ch2.shape
+def images_to_circuits(images: Sequence[Image], max_colors: NDArray[np.uint8], pixel_mapping: PixelMapping = sequential_mapping) -> \
+    Generator[Tuple[int, CircuitBuilder], None, None]:
+    assert all(image.shape == images[0].shape for image in images), "All images must have the same shape"
 
-        ch1_qubits = _qubits_from_size(ch1.shape[0])
-        ch2_qubits = _qubits_from_size(ch2.shape[0])
+    for index, channels in enumerate(zip(*images)):
+        
+        if all(max_color > 0 for max_color in max_colors[index]):
+            qubits = [2 * _qubits_from_size(channel.shape[0]) for channel in channels]
+            data = [_map_channel_to_amplitudes(channels[i], pixel_mapping(qubits[i] // 2)) for i in range(len(channels))]
 
-        data1 = _map_channel_to_amplitudes(ch1, pixel_mapping(ch1_qubits))
-        data2 = _map_channel_to_amplitudes(ch2, pixel_mapping(ch2_qubits))
-
-        yield CircuitBuilder(2 * ch1_qubits, 2 * ch2_qubits).with_data(data1, data2)
+            yield (index, CircuitBuilder(*qubits).with_data(*data))
 
 
 def probabilities_to_channel(probabilities: NDArray[np.float64], max_color: int, pixel_mapping: PixelMapping = sequential_mapping) -> \
@@ -234,6 +234,7 @@ def run_circuit(circuit: QuantumCircuit, device: str = "CPU", shots: Optional[in
     '''
     backend = Aer.get_backend("statevector_simulator" if use_statevector else "qasm_simulator")
     backend.set_options(device=device)
+
     result: Result = execute(circuit, backend, shots=shots if not use_statevector else 1).result()
     data: Union[Dict[str, int], Dict[int, float]]= {
         int(key, 2): np.abs(value) ** 2 
