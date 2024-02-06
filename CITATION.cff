@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: Atanasov
+  given-names: Simeon
+- family-names: Ogreanu
+  given-names: Codrin
+- family-names: Ruijters
+  given-names: Stan
+- family-names: Tomášek
+  given-names: Matej
+title: "Quantum Image Processor with Qubit String Encoding"
+version: 1.1.0
+date-released: 2024-01-31
+url: https://github.com/simo1427/quantum-minor-proj
