@@ -1,22 +1,18 @@
-from qiskit import QuantumCircuit
-from qiskit.quantum_info import Pauli
-from qiskit_ibm_runtime import QiskitRuntimeService, Sampler
-
-from qmputils import retrieve_token
-
-qc = QuantumCircuit(2)
-
-# Provide your IBM Quantum API token here.
-# These two lines only need to be run once, as your credentials get saved in $HOME/.qiskit/qiskit-ibm.json.
-# See more: https://docs.quantum.ibm.com/start/setup-channel
-api_token = retrieve_token()
-service = QiskitRuntimeService(channel="ibm_quantum", token=api_token)
-
-backend = service.backend("ibmq_qasm_simulator")
+from image_effects import *
+from timing_curves import *
 
 
-job = Sampler(backend).run(qc, shots=1024)
-print(f"job id: {job.job_id()}")
-result = job.result()
-print(result)
-
+if __name__ == "__main__":
+    animate_images(
+        'media/ocean.png',
+        'media/grass.png',
+        partial_swap,
+        frames=60,
+        timing_curve=linear,
+        use_statevector=True,
+        animate_back=True,
+        alpha=1.0,
+        i=0,
+        j=1,
+        on_registers=True
+    )

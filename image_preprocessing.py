@@ -1,10 +1,11 @@
 import cv2
 import numpy as np
 from numpy.typing import NDArray
+from typing import Tuple
 
-Mat = NDArray[np.uint8]
+Image = NDArray[np.uint8]
 
-def image_read(path: str, grayscale: bool = False) -> Mat:
+def image_read(path: str, grayscale: bool = False) -> Image:
     """
     Reads an image provided as a path, returns a numpy array with its values.
 
@@ -16,10 +17,37 @@ def image_read(path: str, grayscale: bool = False) -> Mat:
     the image as a Numpy array. Note that the default order of subchannels in OpenCV is BGR
     """
     if grayscale:
-        return cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-    return cv2.imread(path)
+        return np.expand_dims(cv2.imread(path, cv2.IMREAD_GRAYSCALE), axis=0)
+    return np.moveaxis(cv2.imread(path), 2, 0)
 
-def bgr_to_ycrcb(img: np.ndarray, subsampling: bool = True) -> (Mat, Mat, Mat):
+def image_pad(image: Image, padding: str = "reflect") -> Image:
+    """
+    Pads the image provided as input
+
+    Arguments:
+    image -- the image data stored as an NDArray
+    
+    Keyword arguments:
+    padding='reflect' -- the mode of padding; consult Numpy's documentation for np.pad() for the available modes
+    """
+
+    # Keep in mind that this is expected to work with image_read, which 
+    # *rolls the axes so that the first dim is colour...*
+
+    if len(image.shape) == 2:
+        pow2 = 2**int(np.max(np.ceil(np.log2(np.array(image.shape)))))
+
+    pow2 = 2**int(np.max(np.ceil(np.log2(np.array(image.shape[:2])))))
+
+    pad_image = lambda x: np.pad(x, ((pow2-x.shape[0])//2, (pow2-x.shape[1])//2), mode=padding)
+
+    if len(image.shape) == 2:
+        return pad_image(image)
+    
+    out = np.stack([pad_image(image[i]) for i in range(image.shape[0])], axis=0)
+    return out
+
+def bgr_to_ycrcb(img: np.ndarray, subsampling: bool = True) -> Image:
     """
     Returns a tuple containing three separate Numpy arrays holding the image data.
     By default subsamping is on, so the arrays would have different shapes, thus
@@ -60,7 +88,7 @@ def bgr_to_ycrcb(img: np.ndarray, subsampling: bool = True) -> (Mat, Mat, Mat):
 
 
 
-def ycrcb_to_bgr(Y: Mat, _Cr: Mat, _Cb: Mat) -> Mat:
+def ycrcb_to_bgr(Y: NDArray[np.uint8], _Cr: NDArray[np.uint8], _Cb: NDArray[np.uint8]) -> NDArray[np.uint8]:
     """
     Reconstructs the image from given chrominance channels
     """
