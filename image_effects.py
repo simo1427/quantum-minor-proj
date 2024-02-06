@@ -323,7 +323,7 @@ def animate_images(
             img = np.moveaxis(tmp, 0, 2)    # Interpret the data as image
 
             filename = f"media/{frame}-{i}.png"
-            cv2.imwrite(filename, img)  # Write the frame to disk
+            cv2.imwrite(filename, cv2.resize(img, (256, 256), interpolation=cv2.INTER_NEAREST))  # Write the frame to disk
             files[i].append(filename)
     
     # Compose the animations and write them to the disk
